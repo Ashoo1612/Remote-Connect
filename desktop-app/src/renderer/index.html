@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss:;">
+  <title>RemoteDesk</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+      color: #fff;
+      min-height: 100vh;
+    }
+    
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 40px 20px;
+    }
+    
+    .header {
+      text-align: center;
+      margin-bottom: 40px;
+    }
+    
+    .header h1 {
+      font-size: 2.5rem;
+      margin-bottom: 8px;
+      background: linear-gradient(90deg, #667eea, #764ba2);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    
+    .header p {
+      color: #888;
+      font-size: 1rem;
+    }
+    
+    .card {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 16px;
+      padding: 32px;
+      margin-bottom: 24px;
+    }
+    
+    .partner-id-display {
+      text-align: center;
+      padding: 24px;
+      background: rgba(102, 126, 234, 0.1);
+      border-radius: 12px;
+      margin-bottom: 24px;
+    }
+    
+    .partner-id-display label {
+      display: block;
+      color: #888;
+      font-size: 0.875rem;
+      margin-bottom: 8px;
+    }
+    
+    .partner-id-display .id {
+      font-size: 2rem;
+      font-weight: bold;
+      font-family: 'Monaco', 'Consolas', monospace;
+      letter-spacing: 4px;
+      color: #667eea;
+    }
+    
+    .connect-section {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 24px;
+    }
+    
+    .connect-section input {
+      flex: 1;
+      padding: 14px 18px;
+      font-size: 1.1rem;
+      border: 2px solid rgba(255, 255, 255, 0.1);
+      border-radius: 10px;
+      background: rgba(0, 0, 0, 0.3);
+      color: #fff;
+      font-family: 'Monaco', 'Consolas', monospace;
+      letter-spacing: 2px;
+    }
+    
+    .connect-section input:focus {
+      outline: none;
+      border-color: #667eea;
+    }
+    
+    .connect-section input::placeholder {
+      color: #555;
+      letter-spacing: 1px;
+    }
+    
+    .btn {
+      padding: 14px 28px;
+      font-size: 1rem;
+      font-weight: 600;
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    
+    .btn-primary {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: #fff;
+    }
+    
+    .btn-primary:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 20px rgba(102, 126, 234, 0.4);
+    }
+    
+    .btn-success {
+      background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+      color: #fff;
+    }
+    
+    .btn-danger {
+      background: linear-gradient(135deg, #eb3349 0%, #f45c43 100%);
+      color: #fff;
+    }
+    
+    .btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
+    }
+    
+    .status {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 16px;
+      border-radius: 8px;
+      font-size: 0.9rem;
+    }
+    
+    .status.online {
+      background: rgba(56, 239, 125, 0.1);
+      color: #38ef7d;
+    }
+    
+    .status.offline {
+      background: rgba(235, 51, 73, 0.1);
+      color: #eb3349;
+    }
+    
+    .status.connecting {
+      background: rgba(102, 126, 234, 0.1);
+      color: #667eea;
+    }
+    
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+    
+    .session-view {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: #000;
+      z-index: 100;
+    }
+    
+    .session-view.active {
+      display: flex;
+      flex-direction: column;
+    }
+    
+    .session-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 20px;
+      background: rgba(0, 0, 0, 0.8);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    }
+    
+    .session-header .info {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    
+    .session-header .actions {
+      display: flex;
+      gap: 8px;
+    }
+    
+    .video-container {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #111;
+      position: relative;
+    }
+    
+    .video-container video {
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+    }
+    
+    .sharing-indicator {
+      text-align: center;
+      padding: 60px;
+    }
+    
+    .sharing-indicator h2 {
+      font-size: 1.5rem;
+      margin-bottom: 12px;
+    }
+    
+    .sharing-indicator p {
+      color: #888;
+    }
+    
+    .control-toggle {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 16px;
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 8px;
+      cursor: pointer;
+    }
+    
+    .control-toggle.active {
+      background: rgba(56, 239, 125, 0.2);
+      color: #38ef7d;
+    }
+    
+    .badge {
+      padding: 6px 12px;
+      border-radius: 20px;
+      font-size: 0.8rem;
+      font-weight: 600;
+    }
+    
+    .badge-success {
+      background: rgba(56, 239, 125, 0.2);
+      color: #38ef7d;
+    }
+    
+    .badge-info {
+      background: rgba(102, 126, 234, 0.2);
+      color: #667eea;
+    }
+    
+    .btn-secondary {
+      background: rgba(255, 255, 255, 0.1);
+      color: #fff;
+    }
+    
+    .btn-warning {
+      background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+      color: #fff;
+    }
+    
+    .blank-screen-controls {
+      display: none;
+      align-items: center;
+      gap: 8px;
+    }
+    
+    .blank-screen-controls input {
+      padding: 6px 10px;
+      font-size: 0.8rem;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 6px;
+      background: rgba(0, 0, 0, 0.3);
+      color: #fff;
+      width: 150px;
+    }
+    
+    .blank-screen-controls input:focus {
+      outline: none;
+      border-color: #667eea;
+    }
+    
+    .blank-screen-controls input::placeholder {
+      color: #666;
+    }
+    
+    .source-selector {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.9);
+      z-index: 200;
+      padding: 40px;
+      overflow: auto;
+    }
+    
+    .source-selector.active {
+      display: block;
+    }
+    
+    .source-selector h2 {
+      text-align: center;
+      margin-bottom: 24px;
+    }
+    
+    .sources-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 16px;
+      max-width: 900px;
+      margin: 0 auto;
+    }
+    
+    .source-item {
+      background: rgba(255, 255, 255, 0.05);
+      border: 2px solid rgba(255, 255, 255, 0.1);
+      border-radius: 12px;
+      padding: 12px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    
+    .source-item:hover {
+      border-color: #667eea;
+      transform: translateY(-4px);
+    }
+    
+    .source-item img {
+      width: 100%;
+      height: 120px;
+      object-fit: contain;
+      border-radius: 8px;
+      background: #000;
+      margin-bottom: 8px;
+    }
+    
+    .source-item .name {
+      font-size: 0.875rem;
+      text-align: center;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+  </style>
+</head>
+<body>
+  <div class="container" id="mainView">
+    <div class="header">
+      <h1>RemoteDesk</h1>
+      <p>Secure Remote Desktop Control</p>
+    </div>
+    
+    <div class="card">
+      <div class="partner-id-display">
+        <label>Your Partner ID</label>
+        <div class="id" id="partnerId">---</div>
+      </div>
+      
+      <div id="connectionStatus" class="status offline">
+        <span class="status-dot"></span>
+        <span>Connecting to server...</span>
+      </div>
+    </div>
+    
+    <div class="card">
+      <h3 style="margin-bottom: 16px;">Connect to Partner</h3>
+      <div class="connect-section">
+        <input type="text" id="remoteIdInput" placeholder="Enter Partner ID" maxlength="11">
+        <button class="btn btn-primary" id="connectBtn" disabled>Connect</button>
+      </div>
+      
+      <button class="btn btn-success" id="shareBtn" disabled style="width: 100%;">
+        Share Your Screen
+      </button>
+    </div>
+  </div>
+  
+  <div class="source-selector" id="sourceSelector">
+    <h2>Select Screen to Share</h2>
+    <div class="sources-grid" id="sourcesGrid"></div>
+    <div style="text-align: center; margin-top: 24px;">
+      <button class="btn btn-danger" id="cancelSourceBtn">Cancel</button>
+    </div>
+  </div>
+  
+  <div class="session-view" id="sessionView">
+    <div class="session-header">
+      <div class="info">
+        <span class="badge badge-success" id="sessionStatus">Connected</span>
+        <span id="sessionInfo">Partner: ---</span>
+        <span id="sessionTimer">00:00</span>
+      </div>
+      <div class="actions">
+        <span class="badge badge-info" id="controllerStatusBadge" style="display: none;">Control: OFF</span>
+        <div class="blank-screen-controls" id="blankScreenControls">
+          <input type="text" id="blankScreenMessage" placeholder="Custom message...">
+          <button class="btn btn-secondary" id="blankScreenBtn" onclick="toggleBlankScreen()">Blank Screen</button>
+        </div>
+        <div class="control-toggle" id="controlToggle" style="display: none;">
+          <span>Remote Control</span>
+          <span id="controlStatus">OFF</span>
+        </div>
+        <button class="btn btn-danger" id="disconnectBtn">Disconnect</button>
+      </div>
+    </div>
+    <div class="video-container" id="videoContainer">
+      <video id="remoteVideo" autoplay playsinline></video>
+      <div class="sharing-indicator" id="sharingIndicator" style="display: none;">
+        <h2>Sharing Your Screen</h2>
+        <p>Partner is viewing your screen</p>
+      </div>
+    </div>
+  </div>
+  
+  <script src="app.js"></script>
+</body>
+</html>

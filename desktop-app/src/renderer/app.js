@@ -1,12 +1,4 @@
-const getServerUrl = () => {
-  if (window.REMOTEDESK_SERVER_URL) {
-    return window.REMOTEDESK_SERVER_URL;
-  }
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const host = window.location.host || 'localhost:5000';
-  return `${protocol}//${host}/ws`;
-};
-const SERVER_URL = getServerUrl();
+const SERVER_URL = 'wss://remote-connect--ashoorosh.replit.app/ws';
 
 let ws = null;
 let pc = null;
@@ -65,8 +57,7 @@ function connectWebSocket() {
   partnerId = generatePartnerId();
   elements.partnerId.textContent = formatPartnerId(partnerId);
   
-  const wsUrl = SERVER_URL.replace('YOUR_SERVER_URL', window.location.host || 'localhost:5000');
-  ws = new WebSocket(wsUrl);
+  ws = new WebSocket(SERVER_URL);
   
   ws.onopen = () => {
     updateStatus('online', 'Connected to server');

@@ -18,7 +18,6 @@ const elements = {
   connectionStatus: document.getElementById('connectionStatus'),
   remoteIdInput: document.getElementById('remoteIdInput'),
   connectBtn: document.getElementById('connectBtn'),
-  shareBtn: document.getElementById('shareBtn'),
   mainView: document.getElementById('mainView'),
   sessionView: document.getElementById('sessionView'),
   sourceSelector: document.getElementById('sourceSelector'),
@@ -62,19 +61,18 @@ function connectWebSocket() {
   ws.onopen = () => {
     updateStatus('online', 'Connected to server');
     elements.connectBtn.disabled = false;
-    elements.shareBtn.disabled = false;
     
     ws.send(JSON.stringify({
       type: 'join',
-      partnerId: partnerId,
-      deviceName: 'Desktop App'
+      from: partnerId,
+      to: 'server',
+      payload: { name: 'Desktop App' }
     }));
   };
   
   ws.onclose = () => {
     updateStatus('offline', 'Disconnected from server');
     elements.connectBtn.disabled = true;
-    elements.shareBtn.disabled = true;
     setTimeout(connectWebSocket, 3000);
   };
   
@@ -92,7 +90,7 @@ async function handleSignalingMessage(event) {
   
   switch (data.type) {
     case 'connection-request':
-      const accept = confirm(`${formatPartnerId(data.from)} wants to connect. Accept?`);
+      const accept = confirm(`${formatPartnerId(data.from)} wants to connect. Allow access?`);
       if (accept) {
         remotePartnerId = data.from;
         role = 'sharer';
@@ -102,12 +100,10 @@ async function handleSignalingMessage(event) {
       }
       break;
       
-    case 'connection-accepted':
-      console.log('Connection accepted, waiting for offer...');
-      break;
-      
     case 'connection-declined':
       alert('Connection was declined');
+      elements.connectBtn.disabled = false;
+      elements.connectBtn.textContent = 'Connect';
       break;
       
     case 'offer':
@@ -123,6 +119,7 @@ async function handleSignalingMessage(event) {
       break;
       
     case 'end-session':
+    case 'session-ended':
       endSession();
       break;
   }
@@ -180,18 +177,9 @@ function createPeerConnection(isInitiator) {
 }
 
 function setupDataChannel(channel) {
-  channel.onopen = () => {
-    console.log('Data channel opened');
-  };
-  
-  channel.onmessage = (event) => {
-    const data = JSON.parse(event.data);
-    handleDataChannelMessage(data);
-  };
-  
-  channel.onclose = () => {
-    console.log('Data channel closed');
-  };
+  channel.onopen = () => console.log('Data channel opened');
+  channel.onmessage = (event) => handleDataChannelMessage(JSON.parse(event.data));
+  channel.onclose = () => console.log('Data channel closed');
 }
 
 function handleDataChannelMessage(data) {
@@ -201,38 +189,31 @@ function handleDataChannelMessage(data) {
         window.electronAPI.sendMouseMove(data.x, data.y);
       }
       break;
-      
     case 'mouse-click':
       if (role === 'sharer' && controlEnabled && window.electronAPI) {
         window.electronAPI.sendMouseClick(data.x, data.y, data.button);
       }
       break;
-      
     case 'mouse-scroll':
       if (role === 'sharer' && controlEnabled && window.electronAPI) {
         window.electronAPI.sendMouseScroll(data.deltaX, data.deltaY);
       }
       break;
-      
     case 'key-event':
       if (role === 'sharer' && controlEnabled && window.electronAPI) {
         window.electronAPI.sendKeyEvent(data.key, data.eventType, data.ctrlKey, data.shiftKey, data.altKey);
       }
       break;
-      
     case 'control-toggle':
       if (role === 'sharer') {
         controlEnabled = data.enabled;
         updateControlStatus();
-        if (window.electronAPI) {
-          window.electronAPI.setControlEnabled(controlEnabled);
-        }
-      } else if (role === 'controller') {
+        if (window.electronAPI) window.electronAPI.setControlEnabled(controlEnabled);
+      } else {
         remoteControlEnabled = data.enabled;
         updateControllerStatus();
       }
       break;
-      
     case 'blank-screen':
       if (role === 'sharer' && window.electronAPI) {
         window.electronAPI.blankScreen(data.enabled, data.mode, data.html);
@@ -240,12 +221,9 @@ function handleDataChannelMessage(data) {
         sendDataChannelMessage({ type: 'blank-screen-ack', enabled: data.enabled });
       }
       break;
-      
     case 'blank-screen-ack':
-      if (role === 'controller') {
-        blankScreenEnabled = data.enabled;
-        updateBlankScreenStatus();
-      }
+      blankScreenEnabled = data.enabled;
+      updateBlankScreenStatus();
       break;
   }
 }
@@ -257,10 +235,7 @@ function sendDataChannelMessage(data) {
 }
 
 async function showSourceSelector() {
-  if (!window.electronAPI) {
-    console.error('Electron API not available');
-    return null;
-  }
+  if (!window.electronAPI) return null;
   
   const sources = await window.electronAPI.getSources();
   elements.sourcesGrid.innerHTML = '';
@@ -269,10 +244,7 @@ async function showSourceSelector() {
     sources.forEach(source => {
       const item = document.createElement('div');
       item.className = 'source-item';
-      item.innerHTML = `
-        <img src="${source.thumbnail}" alt="${source.name}">
-        <div class="name">${source.name}</div>
-      `;
+      item.innerHTML = `<img src="${source.thumbnail}" alt="${source.name}"><div class="name">${source.name}</div>`;
       item.onclick = () => {
         elements.sourceSelector.classList.remove('active');
         resolve(source.id);
@@ -281,7 +253,6 @@ async function showSourceSelector() {
     });
     
     elements.sourceSelector.classList.add('active');
-    
     elements.cancelSourceBtn.onclick = () => {
       elements.sourceSelector.classList.remove('active');
       resolve(null);
@@ -291,50 +262,30 @@ async function showSourceSelector() {
 
 async function startSharing() {
   try {
-    let sourceId = null;
-    
-    if (window.electronAPI) {
-      sourceId = await showSourceSelector();
-      if (!sourceId) {
-        sendSignal({ type: 'connection-declined', to: remotePartnerId });
-        return;
-      }
+    const sourceId = await showSourceSelector();
+    if (!sourceId) {
+      sendSignal({ type: 'connection-declined', to: remotePartnerId });
+      return;
     }
     
-    const constraints = {
+    localStream = await navigator.mediaDevices.getUserMedia({
       audio: false,
-      video: sourceId ? {
-        mandatory: {
-          chromeMediaSource: 'desktop',
-          chromeMediaSourceId: sourceId
-        }
-      } : true
-    };
-    
-    localStream = await navigator.mediaDevices.getUserMedia(constraints);
+      video: { mandatory: { chromeMediaSource: 'desktop', chromeMediaSourceId: sourceId } }
+    });
     
     pc = createPeerConnection(true);
-    
-    localStream.getTracks().forEach(track => {
-      pc.addTrack(track, localStream);
-    });
+    localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
     
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
-    
-    sendSignal({
-      type: 'offer',
-      to: remotePartnerId,
-      payload: offer
-    });
+    sendSignal({ type: 'offer', to: remotePartnerId, payload: offer });
     
     showSessionView();
     elements.sharingIndicator.style.display = 'block';
     elements.remoteVideo.style.display = 'none';
     elements.controlToggle.style.display = 'flex';
-    
   } catch (err) {
-    console.error('Error starting share:', err);
+    console.error('Error:', err);
     alert('Failed to start screen sharing');
   }
 }
@@ -344,31 +295,17 @@ async function handleOffer(offer, from) {
   role = 'controller';
   
   pc = createPeerConnection(false);
-  
   await pc.setRemoteDescription(new RTCSessionDescription(offer));
   
   const answer = await pc.createAnswer();
   await pc.setLocalDescription(answer);
-  
-  sendSignal({
-    type: 'answer',
-    to: remotePartnerId,
-    payload: answer
-  });
+  sendSignal({ type: 'answer', to: remotePartnerId, payload: answer });
   
   showSessionView();
   elements.sharingIndicator.style.display = 'none';
   elements.remoteVideo.style.display = 'block';
-  
-  const controllerBadge = document.getElementById('controllerStatusBadge');
-  if (controllerBadge) {
-    controllerBadge.style.display = 'inline-block';
-  }
-  
-  const blankControls = document.getElementById('blankScreenControls');
-  if (blankControls) {
-    blankControls.style.display = 'block';
-  }
+  document.getElementById('controllerStatusBadge').style.display = 'inline-block';
+  document.getElementById('blankScreenControls').style.display = 'flex';
   
   setupControllerEvents();
 }
@@ -378,9 +315,7 @@ async function handleAnswer(answer) {
 }
 
 async function handleIceCandidate(candidate) {
-  if (pc) {
-    await pc.addIceCandidate(new RTCIceCandidate(candidate));
-  }
+  if (pc) await pc.addIceCandidate(new RTCIceCandidate(candidate));
 }
 
 function setupControllerEvents() {
@@ -389,26 +324,20 @@ function setupControllerEvents() {
   container.onmousemove = (e) => {
     if (!remoteControlEnabled) return;
     const rect = container.getBoundingClientRect();
-    const x = (e.clientX - rect.left) / rect.width;
-    const y = (e.clientY - rect.top) / rect.height;
-    sendDataChannelMessage({ type: 'mouse-move', x, y });
+    sendDataChannelMessage({ type: 'mouse-move', x: (e.clientX - rect.left) / rect.width, y: (e.clientY - rect.top) / rect.height });
   };
   
   container.onclick = (e) => {
     if (!remoteControlEnabled) return;
     const rect = container.getBoundingClientRect();
-    const x = (e.clientX - rect.left) / rect.width;
-    const y = (e.clientY - rect.top) / rect.height;
-    sendDataChannelMessage({ type: 'mouse-click', x, y, button: e.button });
+    sendDataChannelMessage({ type: 'mouse-click', x: (e.clientX - rect.left) / rect.width, y: (e.clientY - rect.top) / rect.height, button: e.button });
   };
   
   container.oncontextmenu = (e) => {
     if (!remoteControlEnabled) return;
     e.preventDefault();
     const rect = container.getBoundingClientRect();
-    const x = (e.clientX - rect.left) / rect.width;
-    const y = (e.clientY - rect.top) / rect.height;
-    sendDataChannelMessage({ type: 'mouse-click', x, y, button: 2 });
+    sendDataChannelMessage({ type: 'mouse-click', x: (e.clientX - rect.left) / rect.width, y: (e.clientY - rect.top) / rect.height, button: 2 });
   };
   
   container.onwheel = (e) => {
@@ -417,107 +346,52 @@ function setupControllerEvents() {
   };
   
   document.onkeydown = (e) => {
-    if (!remoteControlEnabled) return;
-    if (e.target.tagName === 'INPUT') return;
+    if (!remoteControlEnabled || e.target.tagName === 'INPUT') return;
     e.preventDefault();
-    sendDataChannelMessage({
-      type: 'key-event',
-      key: e.key,
-      eventType: 'keydown',
-      ctrlKey: e.ctrlKey,
-      shiftKey: e.shiftKey,
-      altKey: e.altKey
-    });
+    sendDataChannelMessage({ type: 'key-event', key: e.key, eventType: 'keydown', ctrlKey: e.ctrlKey, shiftKey: e.shiftKey, altKey: e.altKey });
   };
   
   document.onkeyup = (e) => {
-    if (!remoteControlEnabled) return;
-    if (e.target.tagName === 'INPUT') return;
-    sendDataChannelMessage({
-      type: 'key-event',
-      key: e.key,
-      eventType: 'keyup'
-    });
+    if (!remoteControlEnabled || e.target.tagName === 'INPUT') return;
+    sendDataChannelMessage({ type: 'key-event', key: e.key, eventType: 'keyup' });
   };
 }
 
 function updateControllerStatus() {
-  const statusEl = document.getElementById('controllerStatusBadge');
-  if (statusEl) {
-    statusEl.textContent = remoteControlEnabled ? 'Control: ON' : 'Control: OFF';
-    statusEl.className = remoteControlEnabled ? 'badge badge-success' : 'badge badge-info';
+  const el = document.getElementById('controllerStatusBadge');
+  if (el) {
+    el.textContent = remoteControlEnabled ? 'Control: ON' : 'Control: OFF';
+    el.className = remoteControlEnabled ? 'badge badge-success' : 'badge badge-info';
   }
 }
 
 function updateBlankScreenStatus() {
-  const blankBtn = document.getElementById('blankScreenBtn');
-  if (blankBtn) {
-    blankBtn.textContent = blankScreenEnabled ? 'Show Screen' : 'Blank Screen';
-    blankBtn.className = blankScreenEnabled ? 'btn btn-warning' : 'btn btn-secondary';
+  const btn = document.getElementById('blankScreenBtn');
+  if (btn) {
+    btn.textContent = blankScreenEnabled ? 'Show Screen' : 'Blank Screen';
+    btn.className = blankScreenEnabled ? 'btn btn-warning' : 'btn btn-secondary';
   }
 }
 
 function toggleBlankScreen() {
-  const newState = !blankScreenEnabled;
-  const customHtml = document.getElementById('blankScreenMessage')?.value;
-  
+  const msg = document.getElementById('blankScreenMessage')?.value;
   sendDataChannelMessage({ 
     type: 'blank-screen', 
-    enabled: newState,
-    mode: customHtml ? 'html' : 'black',
-    html: customHtml ? generateBlankHtml(customHtml) : null
+    enabled: !blankScreenEnabled,
+    mode: msg ? 'html' : 'black',
+    html: msg ? `<!DOCTYPE html><html><head><style>body{margin:0;background:#000;display:flex;align-items:center;justify-content:center;height:100vh;font-family:system-ui;color:#fff}.m{text-align:center;padding:40px}h1{font-size:32px;margin-bottom:16px}p{font-size:18px;opacity:.7}</style></head><body><div class="m"><h1>Remote Session Active</h1><p>${msg.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</p></div></body></html>` : null
   });
-}
-
-function generateBlankHtml(message) {
-  return `
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <style>
-        body {
-          margin: 0;
-          background: #000;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          height: 100vh;
-          font-family: system-ui, -apple-system, sans-serif;
-          color: #fff;
-        }
-        .message {
-          text-align: center;
-          padding: 40px;
-          max-width: 80%;
-        }
-        h1 { font-size: 32px; margin-bottom: 16px; }
-        p { font-size: 18px; opacity: 0.7; white-space: pre-wrap; }
-      </style>
-    </head>
-    <body>
-      <div class="message">
-        <h1>Remote Session Active</h1>
-        <p>${message.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</p>
-      </div>
-    </body>
-    </html>
-  `;
 }
 
 function showSessionView() {
   elements.mainView.style.display = 'none';
   elements.sessionView.classList.add('active');
   elements.sessionInfo.textContent = `Partner: ${formatPartnerId(remotePartnerId)}`;
-  
   sessionStartTime = Date.now();
-  timerInterval = setInterval(updateTimer, 1000);
-}
-
-function updateTimer() {
-  const elapsed = Math.floor((Date.now() - sessionStartTime) / 1000);
-  const mins = Math.floor(elapsed / 60).toString().padStart(2, '0');
-  const secs = (elapsed % 60).toString().padStart(2, '0');
-  elements.sessionTimer.textContent = `${mins}:${secs}`;
+  timerInterval = setInterval(() => {
+    const s = Math.floor((Date.now() - sessionStartTime) / 1000);
+    elements.sessionTimer.textContent = `${String(Math.floor(s/60)).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`;
+  }, 1000);
 }
 
 function updateControlStatus() {
@@ -526,76 +400,35 @@ function updateControlStatus() {
 }
 
 function endSession() {
-  if (pc) {
-    pc.close();
-    pc = null;
-  }
-  
-  if (localStream) {
-    localStream.getTracks().forEach(track => track.stop());
-    localStream = null;
-  }
-  
-  if (timerInterval) {
-    clearInterval(timerInterval);
-    timerInterval = null;
-  }
-  
-  dataChannel = null;
-  remotePartnerId = null;
-  role = null;
-  controlEnabled = false;
-  
+  if (pc) { pc.close(); pc = null; }
+  if (localStream) { localStream.getTracks().forEach(t => t.stop()); localStream = null; }
+  if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+  dataChannel = null; remotePartnerId = null; role = null; controlEnabled = false; remoteControlEnabled = false;
   elements.sessionView.classList.remove('active');
   elements.mainView.style.display = 'block';
   elements.remoteVideo.srcObject = null;
-  
-  if (window.electronAPI) {
-    window.electronAPI.setControlEnabled(false);
-    window.electronAPI.blankScreen(false, 'black', null);
-  }
-  
+  if (window.electronAPI) { window.electronAPI.setControlEnabled(false); window.electronAPI.blankScreen(false, 'black', null); }
   blankScreenEnabled = false;
-  const blankControls = document.getElementById('blankScreenControls');
-  if (blankControls) {
-    blankControls.style.display = 'none';
-  }
+  document.getElementById('blankScreenControls').style.display = 'none';
+  elements.connectBtn.disabled = false;
+  elements.connectBtn.textContent = 'Connect';
 }
 
 elements.connectBtn.onclick = () => {
-  const remoteId = elements.remoteIdInput.value.replace(/\D/g, '');
-  if (remoteId.length !== 9) {
-    alert('Please enter a valid 9-digit Partner ID');
-    return;
-  }
-  
-  remotePartnerId = remoteId;
+  const id = elements.remoteIdInput.value.replace(/\D/g, '');
+  if (id.length !== 9) { alert('Enter a valid 9-digit Partner ID'); return; }
+  remotePartnerId = id;
   role = 'controller';
-  
-  sendSignal({
-    type: 'connection-request',
-    to: remoteId
-  });
-  
+  sendSignal({ type: 'connection-request', to: id });
   elements.connectBtn.disabled = true;
   elements.connectBtn.textContent = 'Connecting...';
-  
   setTimeout(() => {
-    elements.connectBtn.disabled = false;
-    elements.connectBtn.textContent = 'Connect';
-  }, 10000);
-};
-
-elements.shareBtn.onclick = async () => {
-  const remoteId = elements.remoteIdInput.value.replace(/\D/g, '');
-  if (remoteId.length !== 9) {
-    alert('Please enter a valid 9-digit Partner ID to share with');
-    return;
-  }
-  
-  remotePartnerId = remoteId;
-  role = 'sharer';
-  await startSharing();
+    if (elements.connectBtn.textContent === 'Connecting...') {
+      elements.connectBtn.disabled = false;
+      elements.connectBtn.textContent = 'Connect';
+      alert('Connection timed out');
+    }
+  }, 30000);
 };
 
 elements.disconnectBtn.onclick = () => {
@@ -606,23 +439,15 @@ elements.disconnectBtn.onclick = () => {
 elements.controlToggle.onclick = () => {
   controlEnabled = !controlEnabled;
   updateControlStatus();
-  
-  if (window.electronAPI) {
-    window.electronAPI.setControlEnabled(controlEnabled);
-  }
-  
+  if (window.electronAPI) window.electronAPI.setControlEnabled(controlEnabled);
   sendDataChannelMessage({ type: 'control-toggle', enabled: controlEnabled });
 };
 
 elements.remoteIdInput.oninput = (e) => {
-  let value = e.target.value.replace(/\D/g, '');
-  if (value.length > 9) value = value.slice(0, 9);
-  if (value.length > 6) {
-    value = value.slice(0, 3) + '-' + value.slice(3, 6) + '-' + value.slice(6);
-  } else if (value.length > 3) {
-    value = value.slice(0, 3) + '-' + value.slice(3);
-  }
-  e.target.value = value;
+  let v = e.target.value.replace(/\D/g, '').slice(0, 9);
+  if (v.length > 6) v = v.slice(0,3) + '-' + v.slice(3,6) + '-' + v.slice(6);
+  else if (v.length > 3) v = v.slice(0,3) + '-' + v.slice(3);
+  e.target.value = v;
 };
 
 connectWebSocket();

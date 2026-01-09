@@ -1,6 +1,6 @@
 const { app, BrowserWindow, ipcMain, desktopCapturer, screen } = require('electron');
 const path = require('path');
-const { mouse, keyboard, Key, Button, Point } = require('@nut-tree/nut-js');
+const robot = require('@jitsi/robotjs');
 
 let mainWindow;
 let isControlEnabled = false;
@@ -68,7 +68,7 @@ function createOverlay(mode = 'black', htmlContent = '') {
         </html>
       `;
     
-    overlay.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(content)}`);
+    overlay.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(content));
     overlayWindows.push(overlay);
   });
 }
@@ -137,102 +137,96 @@ ipcMain.on('set-control-enabled', (event, enabled) => {
   console.log('Remote control enabled:', enabled);
 });
 
-ipcMain.on('mouse-move', async (event, { x, y }) => {
+ipcMain.on('mouse-move', (event, { x, y }) => {
   if (!isControlEnabled) return;
   try {
     const primaryDisplay = screen.getPrimaryDisplay();
     const { width, height } = primaryDisplay.workAreaSize;
     const targetX = Math.round(x * width);
     const targetY = Math.round(y * height);
-    await mouse.setPosition(new Point(targetX, targetY));
+    robot.moveMouse(targetX, targetY);
   } catch (err) {
     console.error('Mouse move error:', err);
   }
 });
 
-ipcMain.on('mouse-click', async (event, { x, y, button }) => {
+ipcMain.on('mouse-click', (event, { x, y, button }) => {
   if (!isControlEnabled) return;
   try {
     const primaryDisplay = screen.getPrimaryDisplay();
     const { width, height } = primaryDisplay.workAreaSize;
     const targetX = Math.round(x * width);
     const targetY = Math.round(y * height);
-    await mouse.setPosition(new Point(targetX, targetY));
+    robot.moveMouse(targetX, targetY);
     
-    const mouseButton = button === 2 ? Button.RIGHT : Button.LEFT;
-    await mouse.click(mouseButton);
+    const mouseButton = button === 2 ? 'right' : 'left';
+    robot.mouseClick(mouseButton);
   } catch (err) {
     console.error('Mouse click error:', err);
   }
 });
 
-ipcMain.on('mouse-scroll', async (event, { deltaX, deltaY }) => {
+ipcMain.on('mouse-scroll', (event, { deltaX, deltaY }) => {
   if (!isControlEnabled) return;
   try {
-    const scrollAmount = Math.min(Math.abs(Math.round(deltaY / 10)), 10) || 1;
-    if (deltaY > 0) {
-      await mouse.scrollDown(scrollAmount);
-    } else if (deltaY < 0) {
-      await mouse.scrollUp(scrollAmount);
-    }
+    const scrollAmount = Math.round(deltaY / 10) || 1;
+    robot.scrollMouse(0, -scrollAmount);
   } catch (err) {
     console.error('Mouse scroll error:', err);
   }
 });
 
 const keyMap = {
-  'Enter': Key.Enter,
-  'Backspace': Key.Backspace,
-  'Tab': Key.Tab,
-  'Escape': Key.Escape,
-  'ArrowUp': Key.Up,
-  'ArrowDown': Key.Down,
-  'ArrowLeft': Key.Left,
-  'ArrowRight': Key.Right,
-  'Delete': Key.Delete,
-  'Home': Key.Home,
-  'End': Key.End,
-  'PageUp': Key.PageUp,
-  'PageDown': Key.PageDown,
-  'Control': Key.LeftControl,
-  'Shift': Key.LeftShift,
-  'Alt': Key.LeftAlt,
-  'Meta': Key.LeftSuper,
-  ' ': Key.Space,
-  'F1': Key.F1,
-  'F2': Key.F2,
-  'F3': Key.F3,
-  'F4': Key.F4,
-  'F5': Key.F5,
-  'F6': Key.F6,
-  'F7': Key.F7,
-  'F8': Key.F8,
-  'F9': Key.F9,
-  'F10': Key.F10,
-  'F11': Key.F11,
-  'F12': Key.F12,
+  'Enter': 'enter',
+  'Backspace': 'backspace',
+  'Tab': 'tab',
+  'Escape': 'escape',
+  'ArrowUp': 'up',
+  'ArrowDown': 'down',
+  'ArrowLeft': 'left',
+  'ArrowRight': 'right',
+  'Delete': 'delete',
+  'Home': 'home',
+  'End': 'end',
+  'PageUp': 'pageup',
+  'PageDown': 'pagedown',
+  'Control': 'control',
+  'Shift': 'shift',
+  'Alt': 'alt',
+  'Meta': 'command',
+  ' ': 'space',
+  'F1': 'f1',
+  'F2': 'f2',
+  'F3': 'f3',
+  'F4': 'f4',
+  'F5': 'f5',
+  'F6': 'f6',
+  'F7': 'f7',
+  'F8': 'f8',
+  'F9': 'f9',
+  'F10': 'f10',
+  'F11': 'f11',
+  'F12': 'f12',
 };
 
-ipcMain.on('key-event', async (event, { key, eventType, ctrlKey, shiftKey, altKey }) => {
+ipcMain.on('key-event', (event, { key, eventType, ctrlKey, shiftKey, altKey }) => {
   if (!isControlEnabled) return;
   try {
     if (eventType === 'keydown') {
       const modifiers = [];
-      if (ctrlKey) modifiers.push(Key.LeftControl);
-      if (shiftKey) modifiers.push(Key.LeftShift);
-      if (altKey) modifiers.push(Key.LeftAlt);
+      if (ctrlKey) modifiers.push('control');
+      if (shiftKey) modifiers.push('shift');
+      if (altKey) modifiers.push('alt');
       
       const mappedKey = keyMap[key];
       if (mappedKey) {
-        if (modifiers.length > 0) {
-          await keyboard.pressKey(...modifiers, mappedKey);
-          await keyboard.releaseKey(...modifiers, mappedKey);
-        } else {
-          await keyboard.pressKey(mappedKey);
-          await keyboard.releaseKey(mappedKey);
-        }
+        robot.keyTap(mappedKey, modifiers);
       } else if (key.length === 1) {
-        await keyboard.type(key);
+        if (modifiers.length > 0) {
+          robot.keyTap(key.toLowerCase(), modifiers);
+        } else {
+          robot.typeString(key);
+        }
       }
     }
   } catch (err) {
